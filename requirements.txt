@@ -3,7 +3,7 @@ uvicorn
 python-multipart
 python-socketio
 opencv-python
-mediapipe==0.10.14
+mediapipe
 numpy
 Pillow
 requests
