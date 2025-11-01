@@ -86,15 +86,17 @@ class EyeStateDetector:
         self.LEFT_EYE_POINTS = [33, 160, 158, 133, 153, 144]
         self.RIGHT_EYE_POINTS = [362, 385, 387, 263, 373, 380]
         
-        # Adaptive threshold - more conservative for accuracy
-        self.EAR_THRESHOLD = 0.25  # Increased from 0.2 to reduce false positives
-        self.EAR_THRESHOLD_CLOSED = 0.15  # More conservative threshold for closed
+        
+        self.EAR_THRESHOLD = 0.25  # Threshold above which eyes are definitely open
+        self.EAR_THRESHOLD_CLOSED = 0.152  
         
         # Temporal smoothing for more stable predictions
         self.previous_state = None
         self.state_buffer = []
         self.buffer_size = 3  # Consider last 3 frames for stability
         self.window_states = deque(maxlen=10)  # Majority vote over last 10 frames
+        # Track recent EAR values to detect blink transitions better
+        self.ear_history = deque(maxlen=5)  # Track last 5 EAR values for trend detection
 
     def _preprocess(self, frame):
         """Improve contrast using CLAHE on luminance before RGB conversion."""
@@ -176,23 +178,57 @@ class EyeStateDetector:
             # Average EAR
             avg_ear = (left_ear + right_ear) / 2.0
             
+            # Track EAR history for trend detection
+            self.ear_history.append(avg_ear)
+            
+            # Calculate EAR trend (decreasing = closing, increasing = opening)
+            ear_trend = None
+            if len(self.ear_history) >= 3:
+                recent_ears = list(self.ear_history)[-3:]
+                ear_trend = recent_ears[-1] - recent_ears[0]  # Negative = closing, positive = opening
+            
             # Determine eye state with confidence
-            # Use more conservative thresholds for accuracy
+            
             if avg_ear < self.EAR_THRESHOLD_CLOSED:
+                # Only classify as closed if EAR is very low (definitely closed)
                 current_state = "Closed"
                 confidence = 1.0 - (avg_ear / self.EAR_THRESHOLD_CLOSED)  # Normalized confidence
             elif avg_ear > self.EAR_THRESHOLD:
+                # Definitely open
                 current_state = "Open"
                 confidence = 1.0
             else:
-                # In the ambiguous zone - use previous state if available
-                if self.previous_state:
-                    current_state = self.previous_state
-                    confidence = 0.7  # Lower confidence for ambiguous cases
+                
+                # Split ambiguous zone into three regions for better classification
+                mid_point = (self.EAR_THRESHOLD_CLOSED + self.EAR_THRESHOLD) / 2  # ~0.201
+                
+                if avg_ear < mid_point:
+                    # Lower ambiguous zone (0.152 to 0.201) - favor "Closed" to catch more blinks
+                    if avg_ear < (self.EAR_THRESHOLD_CLOSED + 0.025):
+                        # Very close to closed threshold (0.152-0.177) - strongly favor closed
+                        current_state = "Closed"
+                        confidence = 0.8
+                    elif self.previous_state == "Closed":
+                        
+                        current_state = "Closed"
+                        confidence = 0.7
+                    else:
+                        # Moderate zone (0.177-0.201) - check if trending toward closed
+                        # If EAR is trending downward, favor closed (catching blink transition)
+                        if ear_trend is not None and ear_trend < -0.01:
+                            # EAR is decreasing (closing) - favor closed
+                            current_state = "Closed"
+                            confidence = 0.75
+                        elif avg_ear < (self.EAR_THRESHOLD_CLOSED + 0.035):
+                            current_state = "Closed"
+                            confidence = 0.7
+                        else:
+                            current_state = "Open"
+                            confidence = 0.7
                 else:
-                    # Default to "Open" for conservative approach
+                    # Upper ambiguous zone (0.201-0.25) - default to "Open"
                     current_state = "Open"
-                    confidence = 0.6
+                    confidence = 0.7
         
         # If no face detected, report explicitly
         if current_state is None:

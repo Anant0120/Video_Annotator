@@ -72,15 +72,14 @@ class PostureDetector:
             min_tracking_confidence=0.7     # Increased from 0.5
         )
         
-        # Normalized thresholds and hysteresis (resolution independent)
-        # Angle thresholds (degrees) for hysteresis
-        self.ANGLE_HUNCHED = 18.0   # need this to become Hunched
-        self.ANGLE_STRAIGHT = 14.0  # need below this to return to Straight
-        # Horizontal ratio thresholds (fraction of frame width)
-        self.RATIO_HUNCHED_HIP = 0.08     # hip fallback available
-        self.RATIO_STRAIGHT_HIP = 0.06
-        self.RATIO_HUNCHED_FALLBACK = 0.10  # when hips not visible (use nose)
-        self.RATIO_STRAIGHT_FALLBACK = 0.08
+        
+        self.ANGLE_HUNCHED = 32.0   
+        self.ANGLE_STRAIGHT = 25.0  
+        # Horizontal ratio thresholds (fraction of frame width) - extremely conservative
+        self.RATIO_HUNCHED_HIP = 0.15     
+        self.RATIO_STRAIGHT_HIP = 0.10    
+        self.RATIO_HUNCHED_FALLBACK = 0.18  
+        self.RATIO_STRAIGHT_FALLBACK = 0.15 
         
         # For temporal smoothing
         self.previous_posture = None

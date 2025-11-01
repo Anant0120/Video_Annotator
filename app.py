@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Query
+from fastapi import FastAPI, File, UploadFile, HTTPException, WebSocket, WebSocketDisconnect, Query, Form, Request
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 import cv2
 import json
@@ -338,6 +338,7 @@ async def get_ui():
                 const response = await fetch('/annotate?download=false', {
                     method: 'POST',
                     body: formData
+                    // Don't set Content-Type - browser will set it automatically with boundary
                 });
                 
                 const result = await response.json();
@@ -369,6 +370,7 @@ async def get_ui():
                 const response = await fetch('/annotate?download=true', {
                     method: 'POST',
                     body: formData
+                    // Don't set Content-Type - browser will set it automatically with boundary
                 });
                 
                 if (response.ok) {
@@ -538,12 +540,30 @@ async def get_ui():
             const posture = document.getElementById('posture');
             
             eyeState.textContent = data.eye_state;
-            eyeState.className = 'annotation-value ' + 
-                (data.eye_state === 'Open' ? 'eye-open' : 'eye-closed');
+            // Apply appropriate CSS class based on eye state
+            if (data.eye_state === 'Open') {
+                eyeState.className = 'annotation-value eye-open';
+            } else if (data.eye_state === 'Closed') {
+                eyeState.className = 'annotation-value eye-closed';
+            } else {
+                // Not Detected - use a neutral/error style
+                eyeState.className = 'annotation-value';
+                eyeState.style.background = '#ffebee';
+                eyeState.style.color = '#c62828';
+            }
             
             posture.textContent = data.posture;
-            posture.className = 'annotation-value ' + 
-                (data.posture === 'Straight' ? 'posture-straight' : 'posture-hunched');
+            // Apply appropriate CSS class based on posture
+            if (data.posture === 'Straight') {
+                posture.className = 'annotation-value posture-straight';
+            } else if (data.posture === 'Hunched') {
+                posture.className = 'annotation-value posture-hunched';
+            } else {
+                // Not Detected - use a neutral/error style
+                posture.className = 'annotation-value';
+                posture.style.background = '#fff3e0';
+                posture.style.color = '#e65100';
+            }
         }
     </script>
 </body>
@@ -551,7 +571,10 @@ async def get_ui():
 """
 
 @app.post("/annotate")
-async def annotate_video(video: UploadFile = File(...), download: bool = Query(default=False)):
+async def annotate_video(
+    request: Request,
+    video: UploadFile = File(...)
+):
     """
     Accepts a video file and returns frame-by-frame analysis of eye state and posture.
     
@@ -565,12 +588,35 @@ async def annotate_video(video: UploadFile = File(...), download: bool = Query(d
     temp_file_path = None
     json_file_path = None
     try:
+        # Get download parameter from query string
+        download = request.query_params.get("download", "false").lower() == "true"
+        
+        # Debug logging
+        if video:
+            print(f"Received upload - filename: {video.filename}, content_type: {video.content_type}, download={download}")
+        else:
+            print("ERROR: video parameter is None")
+            raise HTTPException(status_code=400, detail="No video file provided")
+        
         # Validate file type
-        if not video.filename.endswith(('.mp4', '.avi', '.mov')):
+        if not video.filename:
+            print("ERROR: No filename provided")
             raise HTTPException(
                 status_code=400, 
-                detail="Only .mp4, .avi, or .mov files are supported"
+                detail="No filename provided. Please upload a video file."
             )
+        
+        # Check extension (case-insensitive)
+        filename_lower = video.filename.lower()
+        print(f"Checking extension for: {filename_lower}")
+        if not filename_lower.endswith(('.mp4', '.avi', '.mov')):
+            print(f"ERROR: Invalid file extension - {filename_lower}")
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Only .mp4, .avi, or .mov files are supported. Received: {video.filename}"
+            )
+        
+        print(f"File validation passed: {video.filename}")
         
         # Create temporary file to save uploaded video
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(video.filename)[1]) as temp_file:
@@ -741,6 +787,13 @@ async def websocket_endpoint(websocket: WebSocket):
     
     print("Client connected")
     
+    # Reset detector states for new session (only once per connection)
+    eye_detector.previous_state = None
+    eye_detector.state_buffer = []
+    eye_detector.ear_history.clear()
+    posture_detector.previous_posture = None
+    posture_detector.posture_buffer = []
+    
     try:
         while True:
             # Receive base64 encoded frame
@@ -765,14 +818,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 await websocket.send_json({"eye_state": "Not Detected", "posture": "Not Detected"})
                 continue
             
-            # Process frame with fresh state (reset buffers for independent frame processing)
-            # Reset temporal smoothing state for independent frame analysis
-            eye_detector.previous_state = None
-            eye_detector.state_buffer = []
-            posture_detector.previous_posture = None
-            posture_detector.posture_buffer = []
-            
-            # Process frame
+            # Process frame - maintain state across frames for temporal smoothing
+            # Do NOT reset state here - it breaks temporal smoothing and hysteresis
             eye_state = eye_detector.detect_eye_state(frame)
             posture = posture_detector.detect_posture(frame)
             

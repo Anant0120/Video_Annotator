@@ -116,10 +116,8 @@ Upload a video file (.mp4, .avi, or .mov format).
 #### Example cURL Command
 
 ```bash
-curl -X POST "http://localhost:8000/annotate" \
-  -H "accept: application/json" \
-  -H "Content-Type: multipart/form-data" \
-  -F "video=@path/to/your/video.mp4"
+curl -X POST "https://<your-service>.onrender.com/annotate?download=false" \
+  -F "video=@path/to/your_video.mp4"
 ```
 
 #### Example Python Request
